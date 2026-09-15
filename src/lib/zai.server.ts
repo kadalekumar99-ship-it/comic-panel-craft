@@ -316,7 +316,7 @@ async function readStream(
  * Override with the ZAI_VISION_MODEL secret if the id changes.
  */
 export function visionModel(): string {
-  return process.env["ZAI_VISION_MODEL"]?.trim() || "glm-4.5v";
+  return process.env["ZAI_VISION_MODEL"]?.trim() || "glm-4.6v-flash";
 }
 
 /** Reviews run beside renders, so they get their own tiny gate (never the text queue). */
@@ -359,7 +359,7 @@ export async function reviewPanelImage(
       body: JSON.stringify({
         model: visionModel(),
         temperature: 0,
-        max_tokens: 200,
+        max_tokens: 400,
         messages: [
           {
             role: "user",

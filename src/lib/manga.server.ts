@@ -1,6 +1,7 @@
 import type { Segment } from "./script";
 import { withImageKey } from "./keys.server";
 import { textChat } from "./text-engine.server";
+import { reviewPanelImage } from "./zai.server";
 import { assertActive, killableSignal, KilledError } from "./kill-switch.server";
 
 const PIXAZO_URL = "https://gateway.pixazo.ai/flux-1-schnell/v1/getData";
@@ -1668,6 +1669,27 @@ export function promptVariant(prompt: string, level: number, _line?: string): st
   return out.replace(/\s{2,}/g, " ").trim();
 }
 
+/**
+ * Corrective rewrite used ONLY after the automatic review rejected a render.
+ * Reroll changes the seed; this changes the composition, steering away from
+ * the exact fault the reviewer named.
+ */
+export function correctiveVariant(prompt: string, reason: string): string {
+  const fixes: Record<string, string> = {
+    sketch: "fully finished, clean and polished production artwork with flat cel colour fills",
+    sheet: "a single continuous story moment inside one real location, one appearance of each person",
+    no_background:
+      "a fully painted location filling the entire background with depth, furniture, props and scenery",
+    facing_viewer:
+      "characters turned into the scene at a three-quarter or profile angle, eyes on each other or on what they handle",
+    duplicate: "each named person appears exactly once, whole separate bodies, clearly spaced apart",
+    wrong_scene: "exactly the location, cast and action described above and nothing else",
+    text: "a completely wordless picture with no lettering anywhere",
+  };
+  const fix = fixes[reason.toLowerCase().trim()] ?? fixes["wrong_scene"];
+  return `${prompt}. Composition correction: ${fix}.`;
+}
+
 /** True when the renderer refused the wording rather than simply failing. */
 function contentRefusal(message: string): boolean {
   return /nsfw|safety|moderat|blocked|prohibit|forbidden|policy|inappropriate|not allowed|flagged|400|422/i.test(
@@ -1720,6 +1742,7 @@ export async function renderPanel(
   // fresh keys. Each round itself retries inside generateImage, so a busy or
   // flaky renderer is worked through instead of failing the panel.
   let refused = false;
+  let lastVerdict = "";
   // Automatic image review may reject a first render (sketch, character sheet,
   // blank background, everyone facing the viewer, wrong scene). One corrective
   // redraw is allowed; after that the panel is kept so a run always finishes.

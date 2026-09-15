@@ -325,7 +325,7 @@ let visionInFlight = 0;
 
 export type ImageVerdict = {
   ok: boolean;
-  /** Short machine reason: sketch | sheet | wrong_scene | no_background | facing_viewer | duplicate | text */
+  /** Short machine reason: sketch | sheet | wrong_scene | no_background | facing_viewer | duplicate | underage_lead | text */
   reason: string;
 };
 
@@ -356,6 +356,7 @@ export async function reviewPanelImage(
     "no_background — blank, white, flat or nearly empty background instead of a real location;\n" +
     "facing_viewer — the characters pose front-on staring at the viewer instead of acting in the story;\n" +
     "duplicate — the same character drawn more than once, or fused/merged bodies;\n" +
+    "underage_lead — the intended scene identifies the main protagonist as a 23-year-old unmarried young man, but he visibly looks like a 14–16-year-old boy or child;\n" +
     "wrong_scene — the picture does not show the intended location, cast or action;\n" +
     "text — visible lettering, captions or speech balloons.\n\n" +
     'Answer with ONE line of JSON only: {"ok":true,"reason":"good"} or {"ok":false,"reason":"<one keyword above>"}';

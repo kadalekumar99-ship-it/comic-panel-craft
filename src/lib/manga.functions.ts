@@ -2,7 +2,12 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { parseScript } from "./script";
-import { buildCharacterBible, writePrompts, renderPanel } from "./manga.server";
+import {
+  buildCharacterBible,
+  normalizeLeadCharacter,
+  writePrompts,
+  renderPanel,
+} from "./manga.server";
 import { engineStatus } from "./zai.server";
 import { withRun, KilledError } from "./kill-switch.server";
 
@@ -36,7 +41,9 @@ export const analyzeScript = createServerFn({ method: "POST" })
     // A user-written sheet is authoritative: no text call, no model rewrite —
     // exactly the lines the user typed are used as the appearance lock.
     const manual = (data.manualBible ?? "").trim();
-    const bible = manual.length > 5 ? manual.slice(0, 6000) : await buildCharacterBible(data.script);
+    const bible = manual.length > 5
+      ? normalizeLeadCharacter(manual.slice(0, 6000))
+      : await buildCharacterBible(data.script);
     return { segments, bible, manual: manual.length > 5, engine: engineStatus() };
     }, signal);
   });

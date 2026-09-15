@@ -347,65 +347,85 @@ export async function reviewPanelImage(
   if (Date.now() < blockedUntil) return null;
   if (visionInFlight >= MAX_VISION_IN_FLIGHT) return null;
   visionInFlight++;
-  const gate = killableSignal(90_000);
+  const instruction =
+    "You are a strict storyboard quality checker for a finished anime story panel.\n" +
+    `INTENDED SCENE: ${sceneBrief.slice(0, 700)}\n\n` +
+    "REJECT the image if ANY of these is true:\n" +
+    "sketch — unfinished, rough, lineart-only, greyscale or clearly low quality;\n" +
+    "sheet — a character/reference/model sheet, turnaround, multiple views or a lineup of the same person;\n" +
+    "no_background — blank, white, flat or nearly empty background instead of a real location;\n" +
+    "facing_viewer — the characters pose front-on staring at the viewer instead of acting in the story;\n" +
+    "duplicate — the same character drawn more than once, or fused/merged bodies;\n" +
+    "wrong_scene — the picture does not show the intended location, cast or action;\n" +
+    "text — visible lettering, captions or speech balloons.\n\n" +
+    'Answer with ONE line of JSON only: {"ok":true,"reason":"good"} or {"ok":false,"reason":"<one keyword above>"}';
   try {
-    const res = await fetch(API, {
-      method: "POST",
-      signal: gate.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey()}`,
-      },
-      body: JSON.stringify({
-        model: visionModel(),
-        temperature: 0,
-        max_tokens: 400,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "image_url", image_url: { url: imageUrl } },
+    // The free vision tier answers a momentary capacity shortage with
+    // 429/1305. That clears in seconds, so a couple of patient retries is the
+    // difference between reviewing every panel and reviewing almost none.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const gate = killableSignal(90_000);
+      try {
+        const res = await fetch(API, {
+          method: "POST",
+          signal: gate.signal,
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey()}`,
+          },
+          body: JSON.stringify({
+            model: visionModel(),
+            temperature: 0,
+            max_tokens: 400,
+            messages: [
               {
-                type: "text",
-                text:
-                  "You are a strict storyboard quality checker for a finished anime story panel.\n" +
-                  `INTENDED SCENE: ${sceneBrief.slice(0, 700)}\n\n` +
-                  "REJECT the image if ANY of these is true:\n" +
-                  "sketch — unfinished, rough, lineart-only, greyscale or clearly low quality;\n" +
-                  "sheet — a character/reference/model sheet, turnaround, multiple views or a lineup of the same person;\n" +
-                  "no_background — blank, white, flat or nearly empty background instead of a real location;\n" +
-                  "facing_viewer — the characters pose front-on staring at the viewer instead of acting in the story;\n" +
-                  "duplicate — the same character drawn more than once, or fused/merged bodies;\n" +
-                  "wrong_scene — the picture does not show the intended location, cast or action;\n" +
-                  "text — visible lettering, captions or speech balloons.\n\n" +
-                  'Answer with ONE line of JSON only: {"ok":true,"reason":"good"} or {"ok":false,"reason":"<one keyword above>"}',
+                role: "user",
+                content: [
+                  { type: "image_url", image_url: { url: imageUrl } },
+                  { type: "text", text: instruction },
+                ],
               },
             ],
-          },
-        ],
-      }),
-    });
-    if (!res.ok) {
-      const body = (await res.text().catch(() => "")).slice(0, 200);
-      if (busy(res.status, body)) blockedUntil = Math.max(blockedUntil, Date.now() + 30_000);
-      console.warn(`[review] HTTP ${res.status}: ${body}`);
-      return null;
+          }),
+        });
+        if (!res.ok) {
+          const body = (await res.text().catch(() => "")).slice(0, 200);
+          const overloaded = /\b1305\b|temporarily overloaded/i.test(body);
+          console.warn(`[review] HTTP ${res.status}: ${body}`);
+          if (overloaded && attempt + 1 < 3) {
+            await backoff(jitter(4_000 * (attempt + 1)));
+            continue;
+          }
+          // A real rate-limit block applies to the whole account: hold back.
+          if (!overloaded && busy(res.status, body)) {
+            blockedUntil = Math.max(blockedUntil, Date.now() + 30_000);
+          }
+          return null;
+        }
+        const json = (await res.json()) as {
+          choices?: { message?: { content?: string } }[];
+        };
+        const text = json.choices?.[0]?.message?.content ?? "";
+        const match = /\{[^{}]*\}/.exec(text.replace(/```(?:json)?/gi, ""));
+        if (!match) return null;
+        const parsed = JSON.parse(match[0]) as { ok?: unknown; reason?: unknown };
+        if (typeof parsed.ok !== "boolean") return null;
+        const verdict = {
+          ok: parsed.ok,
+          reason: String(parsed.reason ?? "").slice(0, 40) || "unspecified",
+        };
+        console.log(`[review] ${verdict.ok ? "accepted" : "rejected"} (${verdict.reason})`);
+        return verdict;
+      } finally {
+        gate.release();
+      }
     }
-    const json = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const text = json.choices?.[0]?.message?.content ?? "";
-    const match = /\{[^{}]*\}/.exec(text.replace(/```(?:json)?/gi, ""));
-    if (!match) return null;
-    const parsed = JSON.parse(match[0]) as { ok?: unknown; reason?: unknown };
-    if (typeof parsed.ok !== "boolean") return null;
-    return { ok: parsed.ok, reason: String(parsed.reason ?? "").slice(0, 40) || "unspecified" };
+    return null;
   } catch (e) {
     if (e instanceof KilledError) throw e;
     console.warn(`[review] skipped: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   } finally {
-    gate.release();
     visionInFlight = Math.max(0, visionInFlight - 1);
   }
 }

@@ -435,6 +435,7 @@ export async function writePrompts(
   to: number,
   requested?: number[],
 ): Promise<string[]> {
+  bible = normalizeLeadCharacter(bible);
   const wanted = requested?.length
     ? [...new Set(requested)].filter((n) => n >= from && n <= to).sort((a, b) => a - b)
     : Array.from({ length: to - from + 1 }, (_, i) => from + i);
@@ -1530,6 +1531,7 @@ export function composeImagePrompt(
   /** The previous panel's place and cast, carried forward for continuity. */
   continuity?: string,
 ): string {
+  bible = bible ? normalizeLeadCharacter(bible) : bible;
   const withCast = enforceLineCast(prompt, line, bible);
   const fixed = enforceGender(sanitizePrompt(withCast), bible);
   const peopled = hasPeople(fixed, bible);
@@ -1719,6 +1721,8 @@ export function correctiveVariant(prompt: string, reason: string): string {
     facing_viewer:
       "characters turned into the scene at a three-quarter or profile angle, eyes on each other or on what they handle",
     duplicate: "each named person appears exactly once, whole separate bodies, clearly spaced apart",
+    underage_lead:
+      "the main protagonist is unmistakably an adult 23-year-old unmarried young man, with mature adult facial proportions and adult height and build",
     wrong_scene: "exactly the location, cast and action described above and nothing else",
     text: "a completely wordless picture with no lettering anywhere",
   };

@@ -1193,12 +1193,17 @@ function Index() {
   async function retryOne(index: number, freshPrompt = true) {
     if (retrying.includes(index)) return;
     setRetrying((prev) => [...prev, index]);
+    // A single-panel redraw is its own run: without a fresh stamp it still
+    // carries the stamp of a run that was stopped, and the server rejects it
+    // instantly as killed — which is why Fix scene and Reroll did nothing.
+    await beginFreshRun();
     const key = scriptKey(script);
     let list = shotsRef.current;
     const record = (i: number, next: Partial<Shot>) => {
       list = list.map((x) => (x.index === i ? { ...x, ...next } : x));
       patch(i, next);
     };
+
 
     try {
       const target = list.find((s) => s.index === index);

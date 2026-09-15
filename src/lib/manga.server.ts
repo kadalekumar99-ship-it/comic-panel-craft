@@ -1720,11 +1720,38 @@ export async function renderPanel(
   // fresh keys. Each round itself retries inside generateImage, so a busy or
   // flaky renderer is worked through instead of failing the panel.
   let refused = false;
+  // Automatic image review may reject a first render (sketch, character sheet,
+  // blank background, everyone facing the viewer, wrong scene). One corrective
+  // redraw is allowed; after that the panel is kept so a run always finishes.
+  let reviewsLeft = 1;
+  let firstUrl: string | null = null;
   for (let round = 0; round < 3; round++) {
     tries++;
     try {
-      const url = await generateImage(prompt, seed + round * 1861, slot + round, bible, 3, line, continuity);
-      return { url, prompt, level: 0, tries, rewritten };
+      let scenePrompt = prompt;
+      if (round > 0 && firstUrl) scenePrompt = correctiveVariant(prompt, lastVerdict);
+      const url = await generateImage(
+        scenePrompt,
+        seed + round * 1861,
+        slot + round,
+        bible,
+        3,
+        line,
+        continuity,
+      );
+      if (!firstUrl) firstUrl = url;
+      if (reviewsLeft > 0) {
+        const verdict = await reviewPanelImage(url, `${line ? `${line}. ` : ""}${prompt}`);
+        if (verdict && !verdict.ok) {
+          reviewsLeft--;
+          lastVerdict = verdict.reason;
+          errors.push(`review rejected round ${round + 1}: ${verdict.reason}`);
+          console.warn(`[review] panel redrawn — ${verdict.reason}`);
+          await pause(200);
+          continue;
+        }
+      }
+      return { url, prompt: scenePrompt, level: 0, tries, rewritten };
     } catch (e) {
       if (e instanceof KilledError) throw e;
       const msg = e instanceof Error ? e.message : String(e);
@@ -1733,6 +1760,9 @@ export async function renderPanel(
     }
     await pause(400 * (round + 1));
   }
+  // Review rejected it but nothing better came back: a reviewed panel still
+  // beats an empty slot in the storyboard.
+  if (firstUrl) return { url: firstUrl, prompt, level: 0, tries, rewritten };
 
   // Stage 2 — softened wording (same scene, same length). Tried whenever the
   // full prompt could not be rendered, not only on an explicit refusal: a free

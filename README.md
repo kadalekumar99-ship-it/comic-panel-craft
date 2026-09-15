@@ -1,29 +1,23 @@
-# Welcome to your Lovable project
+# Pixazo Sparkle Forge
 
-This project was built with [Lovable](https://lovable.dev).
+AI manga/story image generation app built with TanStack Start.
 
-## Build with Lovable
+- **Images**: Pixazo API, using a pool of up to 10 keys in parallel.
+- **Text**: Z.ai GLM `glm-4.7-flash` (free tier), streamed, one request at a time.
 
-Open your project in the [Lovable editor](https://lovable.dev) and keep building.
+## Configuration
 
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: connect the project to GitHub and every change made in Lovable is committed straight to your repository.
-- **Full ownership**: this code is yours. Push to your repository and your changes sync back into Lovable, ready for your next prompt.
+All credentials are stored as server-side secrets and are never shipped to the browser:
+
+| Secret | Purpose |
+| --- | --- |
+| `PIXAZO_API_KEY_1` … `PIXAZO_API_KEY_10` | Image generation key pool |
+| `ZAI_API_KEY` | Z.ai text model key |
+| `ZAI_MODEL` | Optional model override (default `glm-4.7-flash`) |
 
 ## Development
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
-
 ```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
-npm run dev
+bun install
+bun run dev
 ```
-
-## Built with
-
-- TanStack Start
-- TypeScript
-- React
-- Tailwind CSS

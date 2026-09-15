@@ -306,3 +306,106 @@ async function readStream(
 
   return { text: out.trim(), err };
 }
+
+/* ------------------------------------------------------------------ */
+/* Automatic image review (vision)                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Vision model used to inspect a finished panel. Z.ai's free multimodal GLM.
+ * Override with the ZAI_VISION_MODEL secret if the id changes.
+ */
+export function visionModel(): string {
+  return process.env["ZAI_VISION_MODEL"]?.trim() || "glm-4.5v";
+}
+
+/** Reviews run beside renders, so they get their own tiny gate (never the text queue). */
+const MAX_VISION_IN_FLIGHT = 3;
+let visionInFlight = 0;
+
+export type ImageVerdict = {
+  ok: boolean;
+  /** Short machine reason: sketch | sheet | wrong_scene | no_background | facing_viewer | duplicate | text */
+  reason: string;
+};
+
+/**
+ * Looks at a rendered panel and rejects the failure modes a byte-size check
+ * cannot see: unfinished sketches, character/reference sheets, missing
+ * backgrounds, front-facing "posing for the camera" staging, duplicated or
+ * wrong characters, and pictures that are not the described scene.
+ *
+ * Never blocks a run: any problem (busy provider, timeout, unparsable answer)
+ * returns null, which the caller treats as "accept the panel".
+ */
+export async function reviewPanelImage(
+  imageUrl: string,
+  sceneBrief: string,
+): Promise<ImageVerdict | null> {
+  if (process.env["IMAGE_REVIEW"]?.trim() === "off") return null;
+  // The account is already rate limited: reviewing now would only deepen it.
+  if (Date.now() < blockedUntil) return null;
+  if (visionInFlight >= MAX_VISION_IN_FLIGHT) return null;
+  visionInFlight++;
+  const gate = killableSignal(90_000);
+  try {
+    const res = await fetch(API, {
+      method: "POST",
+      signal: gate.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey()}`,
+      },
+      body: JSON.stringify({
+        model: visionModel(),
+        temperature: 0,
+        max_tokens: 200,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "image_url", image_url: { url: imageUrl } },
+              {
+                type: "text",
+                text:
+                  "You are a strict storyboard quality checker for a finished anime story panel.\n" +
+                  `INTENDED SCENE: ${sceneBrief.slice(0, 700)}\n\n` +
+                  "REJECT the image if ANY of these is true:\n" +
+                  "sketch — unfinished, rough, lineart-only, greyscale or clearly low quality;\n" +
+                  "sheet — a character/reference/model sheet, turnaround, multiple views or a lineup of the same person;\n" +
+                  "no_background — blank, white, flat or nearly empty background instead of a real location;\n" +
+                  "facing_viewer — the characters pose front-on staring at the viewer instead of acting in the story;\n" +
+                  "duplicate — the same character drawn more than once, or fused/merged bodies;\n" +
+                  "wrong_scene — the picture does not show the intended location, cast or action;\n" +
+                  "text — visible lettering, captions or speech balloons.\n\n" +
+                  'Answer with ONE line of JSON only: {"ok":true,"reason":"good"} or {"ok":false,"reason":"<one keyword above>"}',
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.text().catch(() => "")).slice(0, 200);
+      if (busy(res.status, body)) blockedUntil = Math.max(blockedUntil, Date.now() + 30_000);
+      console.warn(`[review] HTTP ${res.status}: ${body}`);
+      return null;
+    }
+    const json = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const text = json.choices?.[0]?.message?.content ?? "";
+    const match = /\{[^{}]*\}/.exec(text.replace(/```(?:json)?/gi, ""));
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as { ok?: unknown; reason?: unknown };
+    if (typeof parsed.ok !== "boolean") return null;
+    return { ok: parsed.ok, reason: String(parsed.reason ?? "").slice(0, 40) || "unspecified" };
+  } catch (e) {
+    if (e instanceof KilledError) throw e;
+    console.warn(`[review] skipped: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  } finally {
+    gate.release();
+    visionInFlight = Math.max(0, visionInFlight - 1);
+  }
+}
